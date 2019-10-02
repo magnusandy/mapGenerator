@@ -1,0 +1,17 @@
+{
+  "name": "treasureHunt",
+  "version": "0.0.0",
+  "main": "index.js",
+  "author": "Andrew Magnus <magnusandy@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.17.1",
+    "java8script": "^1.1.1",
+    "mersenne-twister": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.1",
+    "@types/mersenne-twister": "^1.1.2",
+    "typescript": "^3.6.3"
+  }
+}
