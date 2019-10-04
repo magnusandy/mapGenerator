@@ -13,5 +13,8 @@
     "@types/express": "^4.17.1",
     "@types/mersenne-twister": "^1.1.2",
     "typescript": "^3.6.3"
+  },
+  "scripts": {
+    "start": "tsc && node ./dist/restServer/index.js"
   }
 }
