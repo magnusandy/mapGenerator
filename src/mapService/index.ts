@@ -56,13 +56,14 @@ export class MapGenerator {
         const {width, height} = this.config;
         const oceanTile: MapCell = { type: CellType.Sea };
         const oceanGrid: Grid<MapCell> = Grid.emptyGrid(width, height);
-        
+        console.log("ocean1");
         //step 1 create the thickeness based rings
         Stream.range(0, thickness)
         .map(ring => oceanGrid.getRingCoordinates(ring))
         .flatMapList(ringCoords => ringCoords)
         .forEach(ringCoord => oceanGrid.setCoord(ringCoord, oceanTile));
 
+        console.log("ocean2");
         //step 2 generate random inner ring (only a single ring right now)
         try {
             oceanGrid.getRingCoordinates(thickness)
@@ -77,13 +78,17 @@ export class MapGenerator {
     private generateGrid(): Layer[] {
         const { width, height } = this.config;
 
+        console.log("step1");
         // step 1, create a flat ground layer
         const groundLayer: Grid<MapCell> = Grid.filledGrid(width, height, { type: CellType.Grass });
+        console.log("step2");
         //step 2, generate a ocean layer
         const oceanLayer: Grid<MapCell> = this.generateOceanLayer(2, 0.1);
         //step 3 flatten base layers into a single layer
+        console.log("step3");
         const baseLayer = groundLayer.flattenOnto(oceanLayer);
 
+        console.log("step4");
         //step 4, fill layers with empties and return
         return [
             {
@@ -158,7 +163,7 @@ export class Grid<T> {
         }
         return Stream.of(this.coordinateArray())
         .flatMap(l => Stream.of(l))
-        .filter(coord => (coord.x === ring) || (coord.y == ring))
+        .filter(coord => (coord.x === ring) || (coord.y == ring) || coord.x === (this.width-1-ring) || coord.y === (this.height-1-ring))
         .toArray();
     }
 
@@ -227,7 +232,7 @@ export class Grid<T> {
 
     public fillEmptyWith(item: T): Grid<T> {
         Stream.of(this.coordinateArray())
-        .flatMapList(t => t)
+        .flatMap(t => Stream.of(t))
         .filter(coord => !this.getCoord(coord).isPresent())
         .forEach(emptyCoord => this.setCoord(emptyCoord, item));
         return this;

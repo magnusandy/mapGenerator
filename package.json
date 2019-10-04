@@ -5,6 +5,7 @@
   "author": "Andrew Magnus <magnusandy@gmail.com>",
   "license": "MIT",
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.17.1",
     "java8script": "^1.1.1",
     "mersenne-twister": "^1.1.0"
@@ -15,6 +16,6 @@
     "typescript": "^3.6.3"
   },
   "scripts": {
-    "start": "tsc && node ./dist/restServer/index.js"
+    "start": "tsc && node ./dist/restServer/index.js --stack_size=100000"
   }
 }
