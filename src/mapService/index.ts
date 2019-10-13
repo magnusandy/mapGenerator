@@ -53,22 +53,22 @@ export class MapGenerator {
      * how likely it is that that will also be a ocean tile, this should give a "natural" craggy border,
      */
     private generateOceanLayer(thickness: number, chanceToThicken: number): Grid<MapCell> {
-        const {width, height} = this.config;
+        const { width, height } = this.config;
         const oceanTile: MapCell = { type: CellType.Sea };
         const oceanGrid: Grid<MapCell> = Grid.emptyGrid(width, height);
         console.log("ocean1");
         //step 1 create the thickeness based rings
         Stream.range(0, thickness)
-        .map(ring => oceanGrid.getRingCoordinates(ring))
-        .flatMapList(ringCoords => ringCoords)
-        .forEach(ringCoord => oceanGrid.setCoord(ringCoord, oceanTile));
+            .map(ring => oceanGrid.getRingCoordinates(ring))
+            .flatMapList(ringCoords => ringCoords)
+            .forEach(ringCoord => oceanGrid.setCoord(ringCoord, oceanTile));
 
         console.log("ocean2");
         //step 2 generate random inner ring (only a single ring right now)
         try {
             oceanGrid.getRingCoordinates(thickness)
-            .filter(() => this.numberGenerator.random() <= chanceToThicken)
-            .forEach(cell => oceanGrid.setCoord(cell, oceanTile));
+                .filter(() => this.numberGenerator.random() <= chanceToThicken)
+                .forEach(cell => oceanGrid.setCoord(cell, oceanTile));
         } catch (error) { //IllegalParamException from ring function 
             //do nothing just finish
         }
@@ -92,7 +92,7 @@ export class MapGenerator {
         //step 4, fill layers with empties and return
         return [
             {
-                cells: baseLayer.fillEmptyWith({type: CellType.Empty}).getGrid()
+                cells: baseLayer.fillEmptyWith({ type: CellType.Empty }).getGrid()
             },
         ];
     }
@@ -111,9 +111,22 @@ interface Coordinate {
  * the width and height are the REAL value, not the 0 based value of height and width
  */
 export class Grid<T> {
+    /*
+    let h:number,w: number;
+            for (h = 0; h < this.height; h++) {
+                const row = this.grid[h];
+                for (w = 0; w < this.width; w++) {
+                    const item = row[w];
+                    const coord:Coordinate = {y: h, x: w};
+                    //todo something with item
+                }
+            }
+    */
+
     private width: number;
     private height: number;
     private grid: Optional<T>[][];
+    private memoizedCoordinateArray: Optional<Coordinate[]>;
 
     constructor();
     constructor(width: number, height: number);
@@ -121,6 +134,7 @@ export class Grid<T> {
         this.width = width ? width : 0;
         this.height = height ? height : 0;
         this.grid = this.emptyGrid();
+        this.memoizedCoordinateArray = Optional.empty();
     }
 
     public static emptyGrid<T>(width: number, height: number): Grid<T> {
@@ -134,9 +148,16 @@ export class Grid<T> {
     }
 
     private emptyGrid(): Optional<T>[][] {
-        return Stream.range(0, this.height)
-            .map(() => Stream.range(0, this.width).map(() => Optional.empty<T>()).toArray())
-            .toArray();
+        let h: number, w: number;
+        const newGrid: Optional<T>[][] = [];
+        for (h = 0; h < this.height; h++) {
+            const newRow: Optional<T>[] = [];
+            for (w = 0; w < this.width; w++) {
+                newRow.push(Optional.empty());
+            }
+            newGrid.push(newRow);
+        }
+        return newGrid;
     }
 
     public getRow(row: number): Optional<T>[] {
@@ -158,18 +179,34 @@ export class Grid<T> {
      * @throws InvalidParamException
      */
     public getRingCoordinates(ring: number): Coordinate[] {
-        if(!this.isRingValid(ring)) {
+        if (!this.isRingValid(ring)) {
             throw Error("InvalidParamException");
         }
-        return Stream.of(this.coordinateArray())
-        .flatMap(l => Stream.of(l))
-        .filter(coord => (coord.x === ring) || (coord.y == ring) || coord.x === (this.width-1-ring) || coord.y === (this.height-1-ring))
-        .toArray();
+
+        const ringCoords = [];
+        for (const coord of this.coordinateArray()) {
+            if ((coord.x === ring) || (coord.y == ring) || coord.x === (this.width - 1 - ring) || coord.y === (this.height - 1 - ring)) {
+                ringCoords.push(coord);
+            }
+        }
+        return ringCoords;
     }
 
-    private coordinateArray(): Coordinate[][] {
-        return this.grid.map((row, rowNumber) => row.map((cell, columnNumber) => ({y: rowNumber, x: columnNumber})));
-
+    private coordinateArray(): Coordinate[] {
+        if (this.memoizedCoordinateArray.isPresent()) {
+            return this.memoizedCoordinateArray.get();
+        } else {
+            let h: number, w: number;
+            const allCoords: Coordinate[] = [];
+            for (h = 0; h < this.height; h++) {
+                for (w = 0; w < this.width; w++) {
+                    const coord: Coordinate = { y: h, x: w };
+                    allCoords.push(coord);
+                }
+            }
+            this.memoizedCoordinateArray = Optional.of(allCoords);
+            return allCoords;
+        }
     }
 
     //A ring is considered valid if it is less than half of the width or height, whichever is smaller
@@ -179,62 +216,65 @@ export class Grid<T> {
         const smallestDim = Math.min(this.width, this.height);
         const isEven = smallestDim % 2 === 0;
 
-        if(isEven) {
-            return ring <= (smallestDim/2);
+        if (isEven) {
+            return ring <= (smallestDim / 2);
         } else { //isOdd
-            return ring <= ((smallestDim/2)+1);
+            return ring <= ((smallestDim / 2) + 1);
         }
 
     }
 
     public get(y: number, x: number): Optional<T> {
-        return this.getCoord({y, x});
+        return this.getCoord({ y, x });
     }
 
-    public getCoord(coord: Coordinate):Optional<T> {
-        const {y, x} = coord;
+    public getCoord(coord: Coordinate): Optional<T> {
+        const { y, x } = coord;
         return this.grid[y][x];
     }
 
     //get the 4 (or less) directly adjacent neighbours of the given coordinate
     public getAdjacentNeighbours(coord: Coordinate): Optional<T>[] {
-        const {y, x} = coord;
+        const { y, x } = coord;
         return Stream.ofValues(
-            this.safeGet(y+1, x),
-            this.safeGet(y-1, x),
-            this.safeGet(y, x+1),
-            this.safeGet(y, x-1),
+            this.safeGet(y + 1, x),
+            this.safeGet(y - 1, x),
+            this.safeGet(y, x + 1),
+            this.safeGet(y, x - 1),
         ).flatMapOptional(o => o)
-        .toArray();
+            .toArray();
     }
 
-    
-/**
- * flattens the given top grid into the working grid, replacing any elements from the "bottom" with the top, if exists.
- * @param topGrid any existing elements will be added to the base grid
- * @throws IllegalArgumentException if the grid sizes do not match
- */
+
+    /**
+     * flattens the given top grid into the working grid, replacing any elements from the "bottom" with the top, if exists.
+     * @param topGrid any existing elements will be added to the base grid
+     * @throws IllegalArgumentException if the grid sizes do not match
+     */
     public flattenOnto(topGrid: Grid<T>): Grid<T> {
-        
-        if(topGrid.width !== this.width || topGrid.height !== this.height) {
+
+        if (topGrid.width !== this.width || topGrid.height !== this.height) {
             throw Error("IllegalArgumentException");
         }
-        Stream.of(topGrid.coordinateArray())
-        .flatMapList(t => t)
-        .filter(coord => topGrid.getCoord(coord).isPresent())
-        .forEach(existingCoord => {
-            const topElement: T = topGrid.getCoord(existingCoord).get();
-            this.setCoord(existingCoord, topElement);
-        });
 
-        return this;   
+        for (const coord of topGrid.coordinateArray()) {
+            const topItem: Optional<T> = topGrid.getCoord(coord);
+            if (topItem.isPresent()) {
+                this.setCoord(coord, topItem.get());
+            }
+        }
+
+        return this;
     }
 
     public fillEmptyWith(item: T): Grid<T> {
-        Stream.of(this.coordinateArray())
-        .flatMap(t => Stream.of(t))
-        .filter(coord => !this.getCoord(coord).isPresent())
-        .forEach(emptyCoord => this.setCoord(emptyCoord, item));
+        for (const coord of this.coordinateArray()) {
+            const itemAtCoord: Optional<T> = this.getCoord(coord);
+            if (!itemAtCoord.isPresent()) {
+                this.setCoord(coord, item);
+            }
+        }
+
         return this;
     }
 
@@ -248,11 +288,11 @@ export class Grid<T> {
     }
 
     public set(y: number, x: number, item: T): Grid<T> {
-        return this.setCoord({y, x}, item);
+        return this.setCoord({ y, x }, item);
     }
 
     public setCoord(coord: Coordinate, item: T): Grid<T> {
-        const {y, x} = coord;
+        const { y, x } = coord;
         this.grid[y][x] = Optional.of(item);
         return this;
     }
@@ -275,9 +315,14 @@ export class Grid<T> {
 
     //replace all items with the given item
     private fill(item: T): Grid<T> {
-        Stream.of(this.coordinateArray())
-        .flatMapList(t => t)
-        .forEach(coord => this.setCoord(coord, item));
+        let h: number, w: number;
+        for (h = 0; h < this.height; h++) {
+            const row = this.grid[h];
+            for (w = 0; w < this.width; w++) {
+                const coord: Coordinate = { y: h, x: w };
+                this.setCoord(coord, item);
+            }
+        }
         return this;
     }
 }
