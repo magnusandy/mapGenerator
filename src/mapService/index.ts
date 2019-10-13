@@ -27,6 +27,19 @@ export interface Map {
     mapGrid: Layer[];
 }
 
+interface OceanParams {
+    /**
+     * the number of full rings around the outside edge of the map
+     */
+    thickness: number;
+    /**
+     * the number of elements in the array represents how many extra rings will be added inside the 
+     * full outer rings, the value (float percentage i.e. 0.10 is 10% is how likely it is that the water will
+     * be expanded at each point, given it has at least on adjacent water neighbour)
+     */
+    extendedLayeringPercentages: number[];
+}
+
 export class MapGenerator {
     private config: MapGeneratorConfig;
     private numberGenerator: MersenneTwister;
@@ -52,27 +65,42 @@ export class MapGenerator {
      * @param chanceToThicken number between 0-1, 10% would be 0.1: for every concentric point inside the border this chance will define 
      * how likely it is that that will also be a ocean tile, this should give a "natural" craggy border,
      */
-    private generateOceanLayer(thickness: number, chanceToThicken: number): Grid<MapCell> {
+    private generateOceanLayer(params: OceanParams): Grid<MapCell> {
         const { width, height } = this.config;
+        const { thickness } = params;
         const oceanTile: MapCell = { type: CellType.Sea };
         const oceanGrid: Grid<MapCell> = Grid.emptyGrid(width, height);
         console.log("ocean1");
         //step 1 create the thickeness based rings
         Stream.range(0, thickness)
-            .map(ring => oceanGrid.getRingCoordinates(ring))
-            .flatMapList(ringCoords => ringCoords)
-            .forEach(ringCoord => oceanGrid.setCoord(ringCoord, oceanTile));
+            .forEach(ringNumber => this.addRing(oceanGrid, ringNumber, 1, oceanTile, false));
 
         console.log("ocean2");
-        //step 2 generate random inner ring (only a single ring right now)
-        try {
-            oceanGrid.getRingCoordinates(thickness)
-                .filter(() => this.numberGenerator.random() <= chanceToThicken)
-                .forEach(cell => oceanGrid.setCoord(cell, oceanTile));
-        } catch (error) { //IllegalParamException from ring function 
-            //do nothing just finish
-        }
+        //step 2 generate random inner rings
+        params.extendedLayeringPercentages.forEach((percent, index) => {
+            const ringNumber = thickness + index;
+            this.addRing(oceanGrid, ringNumber, percent, oceanTile, true);
+        });
         return oceanGrid;
+    }
+
+    private addRing(grid: Grid<MapCell>, ringNumber: number, chanceToThicken: number, cellToPlace: MapCell, requireAdjacent: boolean): Grid<MapCell> {
+        for (const coord of grid.getRingCoordinates(ringNumber)) {
+            const shouldAddTile = this.numberGenerator.random() <= chanceToThicken;
+            if (shouldAddTile) {
+                if (requireAdjacent) {
+                    const hasAdjacent = Stream.of(grid.getAdjacentNeighbours(coord))
+                        .flatMapOptional(i => i)
+                        .anyMatch(cell => cell.type === cellToPlace.type);
+                    if (hasAdjacent) {
+                        grid.setCoord(coord, cellToPlace);
+                    }
+                } else {
+                    grid.setCoord(coord, cellToPlace);
+                }
+            }
+        }
+        return grid;
     }
 
     private generateGrid(): Layer[] {
@@ -83,7 +111,7 @@ export class MapGenerator {
         const groundLayer: Grid<MapCell> = Grid.filledGrid(width, height, { type: CellType.Grass });
         console.log("step2");
         //step 2, generate a ocean layer
-        const oceanLayer: Grid<MapCell> = this.generateOceanLayer(2, 0.1);
+        const oceanLayer: Grid<MapCell> = this.generateOceanLayer({thickness: 3, extendedLayeringPercentages: [0.9, 0.5, 0.1]});
         //step 3 flatten base layers into a single layer
         console.log("step3");
         const baseLayer = groundLayer.flattenOnto(oceanLayer);
