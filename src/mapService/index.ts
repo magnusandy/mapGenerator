@@ -1,5 +1,7 @@
-import { Optional, Stream } from "java8script";
+import { Optional, Stream, Function } from "java8script";
 import MersenneTwister from "mersenne-twister";
+import { Direction, generateFractal } from "./fractal";
+import SimplexNoise from "simplex-noise";
 
 export interface MetaData {
     width: number;
@@ -11,11 +13,13 @@ export enum CellType {
     Sea = "sea",
     Grass = "grass",
     Beach = "beach",
+    Mountain = "mountain",
     Empty = "empty",
 }
 
 export interface MapCell {
     type: CellType;
+    depth?: number; //between -1 and 1;
 }
 
 export interface Layer {
@@ -51,9 +55,12 @@ interface OceanParams {
 export class MapGenerator {
     private config: MapGeneratorConfig;
     private numberGenerator: MersenneTwister;
+    private noiseGenerator: SimplexNoise;
+
     public constructor(config: MapGeneratorConfig) {
         this.config = config;
         this.numberGenerator = new MersenneTwister(config.seed);
+        this.noiseGenerator = new SimplexNoise(() => this.numberGenerator.random());
     }
 
     public generate(): Map {
@@ -61,7 +68,7 @@ export class MapGenerator {
             metadata: {
                 ...this.config
             },
-            mapGrid: this.generateGrid(),
+            mapGrid: this.generateSimplexGrid(),
         };
     }
 
@@ -119,21 +126,21 @@ export class MapGenerator {
 
         //step 1: go through the craggy sea layers and replace the grass with beach
         const startingCragRing = waterThickness;
-        const endingCragRing = startingCragRing+params.waterLayering.length;
-        const endingFullLayer = endingCragRing+beachThickness;
+        const endingCragRing = startingCragRing + params.waterLayering.length;
+        const endingFullLayer = endingCragRing + beachThickness;
         Stream.range(startingCragRing, endingCragRing)
-        .forEach(craggyRing => {
-            for (const coord of oceanLayer.getRingCoordinates(craggyRing)) {
-                const existingOcean: Optional<MapCell> = oceanLayer.getCoord(coord);
-                if(!existingOcean.isPresent()) {
-                    beachGrid.setCoord(coord, beachTile);
+            .forEach(craggyRing => {
+                for (const coord of oceanLayer.getRingCoordinates(craggyRing)) {
+                    const existingOcean: Optional<MapCell> = oceanLayer.getCoord(coord);
+                    if (!existingOcean.isPresent()) {
+                        beachGrid.setCoord(coord, beachTile);
+                    }
                 }
-            }
-        });
+            });
 
         //step 2: add full beach rings
         Stream.range(endingCragRing, endingFullLayer)
-        .forEach(ringNumber => this.addRing(beachGrid, ringNumber, 1, beachTile, false));
+            .forEach(ringNumber => this.addRing(beachGrid, ringNumber, 1, beachTile, false));
 
         //step 3: add craggy beach Layers
         params.beachLayering.forEach((percent, index) => {
@@ -144,6 +151,64 @@ export class MapGenerator {
         return beachGrid;
     }
 
+    private generateMountainLayer(): Grid<MapCell> {
+        const { width, height } = this.config;
+        const mountainTile: MapCell = { type: CellType.Mountain };
+        const mountainLayer: Grid<MapCell> = Grid.emptyGrid(width, height);
+
+        const start: Coordinate = { y: height / 2, x: width / 2 };
+        const seed: Direction[] = [Direction.S];
+        const generations: number = 16;
+
+        return mountainLayer.drawDirections(start, mountainTile, generateFractal(seed, generations));
+    }
+
+
+    private generateSimplexIsland() {
+        const { width, height } = this.config;
+        return Grid.filledGridSupplier<MapCell>(width, height, this.generateSimplexCell);
+    }
+
+    private generateSimplexCell = (coord: Coordinate): MapCell => {
+        const seaLevel = 0;
+        const freq = 0.02; //the smaller the number, the more joined and consistent the ranges are
+        //this is because you are shifting the point space to be closer together so that each point is more related to its neighbour
+        let randomForCoord = this.noiseGenerator.noise2D(coord.x*freq, coord.y*freq)+
+        this.noiseGenerator.noise2D(coord.x*(freq*0.8), coord.y*(freq*0.8));
+        //this.noiseGenerator.noise2D(coord.x*(freq*3), coord.y*(freq*3)); 
+
+        //shift back to -1 to 1 range
+        randomForCoord = randomForCoord/2;
+        const isNeg = randomForCoord < 0;
+        const absofRand = Math.abs(randomForCoord);
+        //extends the floor, kinda weird with the -1 to 1 system
+        randomForCoord = Math.pow(absofRand, 0.8);
+           
+        if(isNeg) {
+            randomForCoord = parseFloat(`-${randomForCoord}`);//this is dumb lol
+        }
+        if (randomForCoord < seaLevel) {
+            return {
+                type: CellType.Sea,
+                depth: randomForCoord
+            }
+        } else {
+            return {
+                type: CellType.Grass,
+                depth: randomForCoord
+            }
+        }
+    }
+
+    private generateSimplexGrid(): Layer[] {
+        const layer: Grid<MapCell> = this.generateSimplexIsland();
+        return [
+            {
+                cells: layer.fillEmptyWith({ type: CellType.Empty }).getGrid()
+            },
+        ];
+    }
+
     private generateGrid(): Layer[] {
         const { width, height } = this.config;
 
@@ -152,14 +217,15 @@ export class MapGenerator {
         const groundLayer: Grid<MapCell> = Grid.filledGrid(width, height, { type: CellType.Grass });
         console.log("step2");
         //step 2, generate a ocean layer
-        const oceanParams: OceanParams = {waterThickness: 3, waterLayering: [0.9, 0.5, 0.1], beachThickness: 2, beachLayering: [0.3, 0.1]};
+        const oceanParams: OceanParams = { waterThickness: 3, waterLayering: [0.9, 0.5, 0.1], beachThickness: 2, beachLayering: [0.3, 0.1] };
         const oceanLayer: Grid<MapCell> = this.generateOceanLayer(oceanParams);
         //step 3, generate beach Layer
         const beachLayer = this.generateBeachLayer(oceanLayer, oceanParams);
-        
+        //step 4 generate mountain
+        const mountainLayer = this.generateMountainLayer();
         //step 4 flatten base layers into a single layer
         console.log("step3");
-        const baseLayer = Grid.flattenGrids(groundLayer, oceanLayer, beachLayer);
+        const baseLayer = Grid.flattenGrids(groundLayer, oceanLayer, beachLayer, mountainLayer);
         console.log("step4");
         //step 4, fill layers with empties and return
         return [
@@ -219,6 +285,14 @@ export class Grid<T> {
         return grid.fill(item);
     }
 
+    public static filledGridSupplier<T>(width: number, height: number, itemSupplier: (coord: Coordinate) => T): Grid<T> {
+        const newGrid: Grid<T> = new Grid(width, height);
+        for (const coord of newGrid.coordinateArray()) {
+            newGrid.setCoord(coord, itemSupplier(coord));
+        }
+        return newGrid;
+    }
+
     private emptyGrid(): Optional<T>[][] {
         let h: number, w: number;
         const newGrid: Optional<T>[][] = [];
@@ -255,26 +329,26 @@ export class Grid<T> {
             throw Error("InvalidParamException");
         }
 
-        const topLeft:Coordinate = {y: ring, x:ring};
-        const topRight:Coordinate = {y: ring, x:this.width - 1 - ring};
-        const bottomLeft:Coordinate = {y: this.height - 1 - ring, x:ring};
-        const bottomRight:Coordinate = {y: this.height - ring, x: this.width - 1 - ring};
+        const topLeft: Coordinate = { y: ring, x: ring };
+        const topRight: Coordinate = { y: ring, x: this.width - 1 - ring };
+        const bottomLeft: Coordinate = { y: this.height - 1 - ring, x: ring };
+        const bottomRight: Coordinate = { y: this.height - ring, x: this.width - 1 - ring };
 
         const ringCoords = [];
 
         //topRow
         Stream.range(topLeft.x, topRight.x)
-        .forEach(rowX => ringCoords.push({x:rowX, y:topLeft.y}));
+            .forEach(rowX => ringCoords.push({ x: rowX, y: topLeft.y }));
         //bottomRow
         Stream.range(bottomLeft.x, bottomRight.x)
-        .forEach(rowX => ringCoords.push({x:rowX, y:bottomLeft.y}));
+            .forEach(rowX => ringCoords.push({ x: rowX, y: bottomLeft.y }));
         //leftCol
         Stream.range(topLeft.y, bottomLeft.y)
-        .forEach(colY => ringCoords.push({x: topLeft.x, y: colY}));
-         //rightCol
-         Stream.range(topRight.y, bottomRight.y)
-         .forEach(colY => ringCoords.push({x: topRight.x, y: colY}));
-        
+            .forEach(colY => ringCoords.push({ x: topLeft.x, y: colY }));
+        //rightCol
+        Stream.range(topRight.y, bottomRight.y)
+            .forEach(colY => ringCoords.push({ x: topRight.x, y: colY }));
+
         /*
         for (const coord of this.coordinateArray()) {
             if ((coord.x === ring && coord.y >= ring) ||
@@ -341,6 +415,32 @@ export class Grid<T> {
             .toArray();
     }
 
+    public drawDirections(start: Coordinate, item: T, directionList: Direction[]): Grid<T> {
+
+        //draw start
+        this.setCoord(start, item);
+        //go through list of directions and draw them
+        let next = start;
+        directionList
+            .map(d => this.getNextDirection[d])
+            .forEach(coordMapper => {
+                next = coordMapper(next);
+                try {
+                    this.setCoord(next, item);
+                } catch (exception) {
+                    //do nothing
+                }
+            });
+
+        return this;
+    }
+
+    private getNextDirection: { [t in Direction]: Function<Coordinate, Coordinate> } = {
+        N: (start: Coordinate) => ({ y: start.y - 1, x: start.x }),
+        E: (start: Coordinate) => ({ y: start.y, x: start.x + 1 }),
+        S: (start: Coordinate) => ({ y: start.y + 1, x: start.x }),
+        W: (start: Coordinate) => ({ y: start.y, x: start.x - 1 }),
+    }
 
     /**
      * flattens the given top grid into the working grid, replacing any elements from the "bottom" with the top, if exists.
@@ -365,8 +465,8 @@ export class Grid<T> {
 
     public static flattenGrids<T>(...grids: Grid<T>[]): Grid<T> {
         let baseGrid = grids[0];
-        let i:number;
-        for(i = 1; i < grids.length; i++) {
+        let i: number;
+        for (i = 1; i < grids.length; i++) {
             baseGrid = baseGrid.flattenOnto(grids[i]);
         }
         return baseGrid;

@@ -1,5 +1,5 @@
 export const getMap = (): Promise<any>  => {
-    return fetch("http://localhost:4000/")
+    return fetch("http://localhost:4000/?height=200&width=200")
     .then((res:Response) => {
         console.log(res);
         return res.json()
