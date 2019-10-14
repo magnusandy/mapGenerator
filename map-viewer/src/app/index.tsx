@@ -8,7 +8,10 @@ const mapTypeToColor = (t: any): string => {
         }
         if( t === "sea") {
             return "blue";
-        } 
+        }
+        if( t === "beach") {
+            return "#f0ce69";
+        }
         return "white";
 }
 const Cell = styled.td<{color: string}>`

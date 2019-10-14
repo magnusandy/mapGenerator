@@ -31,13 +31,21 @@ interface OceanParams {
     /**
      * the number of full rings around the outside edge of the map
      */
-    thickness: number;
+    waterThickness: number;
     /**
      * the number of elements in the array represents how many extra rings will be added inside the 
      * full outer rings, the value (float percentage i.e. 0.10 is 10% is how likely it is that the water will
      * be expanded at each point, given it has at least on adjacent water neighbour)
      */
-    extendedLayeringPercentages: number[];
+    waterLayering: number[];
+
+    /**
+     * thickeness of the beach inside the craggy ocean layer
+     */
+    beachThickness: number;
+    beachLayering: number[];
+
+
 }
 
 export class MapGenerator {
@@ -67,18 +75,18 @@ export class MapGenerator {
      */
     private generateOceanLayer(params: OceanParams): Grid<MapCell> {
         const { width, height } = this.config;
-        const { thickness } = params;
+        const { waterThickness } = params;
         const oceanTile: MapCell = { type: CellType.Sea };
         const oceanGrid: Grid<MapCell> = Grid.emptyGrid(width, height);
         console.log("ocean1");
         //step 1 create the thickeness based rings
-        Stream.range(0, thickness)
+        Stream.range(0, waterThickness)
             .forEach(ringNumber => this.addRing(oceanGrid, ringNumber, 1, oceanTile, false));
 
         console.log("ocean2");
         //step 2 generate random inner rings
-        params.extendedLayeringPercentages.forEach((percent, index) => {
-            const ringNumber = thickness + index;
+        params.waterLayering.forEach((percent, index) => {
+            const ringNumber = waterThickness + index;
             this.addRing(oceanGrid, ringNumber, percent, oceanTile, true);
         });
         return oceanGrid;
@@ -103,6 +111,39 @@ export class MapGenerator {
         return grid;
     }
 
+    private generateBeachLayer(oceanLayer: Grid<MapCell>, params: OceanParams): Grid<MapCell> {
+        const { width, height } = this.config;
+        const { waterThickness, beachThickness } = params;
+        const beachTile: MapCell = { type: CellType.Beach };
+        const beachGrid: Grid<MapCell> = Grid.emptyGrid(width, height);
+
+        //step 1: go through the craggy sea layers and replace the grass with beach
+        const startingCragRing = waterThickness;
+        const endingCragRing = startingCragRing+params.waterLayering.length;
+        const endingFullLayer = endingCragRing+beachThickness;
+        Stream.range(startingCragRing, endingCragRing)
+        .forEach(craggyRing => {
+            for (const coord of oceanLayer.getRingCoordinates(craggyRing)) {
+                const existingOcean: Optional<MapCell> = oceanLayer.getCoord(coord);
+                if(!existingOcean.isPresent()) {
+                    beachGrid.setCoord(coord, beachTile);
+                }
+            }
+        });
+
+        //step 2: add full beach rings
+        Stream.range(endingCragRing, endingFullLayer)
+        .forEach(ringNumber => this.addRing(beachGrid, ringNumber, 1, beachTile, false));
+
+        //step 3: add craggy beach Layers
+        params.beachLayering.forEach((percent, index) => {
+            const ringNumber = endingFullLayer + index;
+            this.addRing(beachGrid, ringNumber, percent, beachTile, true);
+        });
+
+        return beachGrid;
+    }
+
     private generateGrid(): Layer[] {
         const { width, height } = this.config;
 
@@ -111,11 +152,14 @@ export class MapGenerator {
         const groundLayer: Grid<MapCell> = Grid.filledGrid(width, height, { type: CellType.Grass });
         console.log("step2");
         //step 2, generate a ocean layer
-        const oceanLayer: Grid<MapCell> = this.generateOceanLayer({thickness: 3, extendedLayeringPercentages: [0.9, 0.5, 0.1]});
-        //step 3 flatten base layers into a single layer
+        const oceanParams: OceanParams = {waterThickness: 3, waterLayering: [0.9, 0.5, 0.1], beachThickness: 2, beachLayering: [0.3, 0.1]};
+        const oceanLayer: Grid<MapCell> = this.generateOceanLayer(oceanParams);
+        //step 3, generate beach Layer
+        const beachLayer = this.generateBeachLayer(oceanLayer, oceanParams);
+        
+        //step 4 flatten base layers into a single layer
         console.log("step3");
-        const baseLayer = groundLayer.flattenOnto(oceanLayer);
-
+        const baseLayer = Grid.flattenGrids(groundLayer, oceanLayer, beachLayer);
         console.log("step4");
         //step 4, fill layers with empties and return
         return [
@@ -211,12 +255,36 @@ export class Grid<T> {
             throw Error("InvalidParamException");
         }
 
+        const topLeft:Coordinate = {y: ring, x:ring};
+        const topRight:Coordinate = {y: ring, x:this.width - 1 - ring};
+        const bottomLeft:Coordinate = {y: this.height - 1 - ring, x:ring};
+        const bottomRight:Coordinate = {y: this.height - ring, x: this.width - 1 - ring};
+
         const ringCoords = [];
+
+        //topRow
+        Stream.range(topLeft.x, topRight.x)
+        .forEach(rowX => ringCoords.push({x:rowX, y:topLeft.y}));
+        //bottomRow
+        Stream.range(bottomLeft.x, bottomRight.x)
+        .forEach(rowX => ringCoords.push({x:rowX, y:bottomLeft.y}));
+        //leftCol
+        Stream.range(topLeft.y, bottomLeft.y)
+        .forEach(colY => ringCoords.push({x: topLeft.x, y: colY}));
+         //rightCol
+         Stream.range(topRight.y, bottomRight.y)
+         .forEach(colY => ringCoords.push({x: topRight.x, y: colY}));
+        
+        /*
         for (const coord of this.coordinateArray()) {
-            if ((coord.x === ring) || (coord.y == ring) || coord.x === (this.width - 1 - ring) || coord.y === (this.height - 1 - ring)) {
+            if ((coord.x === ring && coord.y >= ring) ||
+                 (coord.y === ring && coord.x >= ring) || 
+                 coord.x === (this.width - 1 - ring) ||
+                 coord.y === (this.height - 1 - ring)) {
                 ringCoords.push(coord);
             }
         }
+        */
         return ringCoords;
     }
 
@@ -293,6 +361,15 @@ export class Grid<T> {
         }
 
         return this;
+    }
+
+    public static flattenGrids<T>(...grids: Grid<T>[]): Grid<T> {
+        let baseGrid = grids[0];
+        let i:number;
+        for(i = 1; i < grids.length; i++) {
+            baseGrid = baseGrid.flattenOnto(grids[i]);
+        }
+        return baseGrid;
     }
 
     public fillEmptyWith(item: T): Grid<T> {
