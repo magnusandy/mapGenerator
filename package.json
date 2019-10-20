@@ -17,6 +17,8 @@
     "typescript": "^3.6.3"
   },
   "scripts": {
+    "startDB": "docker run -p 8000:8000 amazon/dynamodb-local",
     "start": "tsc && node ./dist/restServer/index.js --stack_size=100000"
+
   }
 }
